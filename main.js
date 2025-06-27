@@ -1,5 +1,5 @@
 import { whatsapp1, wa, useOpenAI, GEMINI_API_KEY, GEMINI_URL } from "./config.js";
-import { callGeminiWithFunctions, remove_msg, sendBrochureOrLink, sendInteractiveMessage, mark_as_seen, sendVideoMessageDirectly } from "./utils.js";
+import { callGeminiWithFunctions, remove_msg, sendBrochureOrLink, sendInteractiveMessage, mark_as_seen, sendVideoMessageDirectly, filterGeminiMessage } from "./utils.js";
 import { callOpenAIWithFunctions } from "./openai_utils.js";
 
 // In-memory chat history per user (phone number)
@@ -86,7 +86,7 @@ const signupController = async (req, res) => {
         - Stay **to the point**, avoid long explanations or filler text.
         - Absolutely **never** start your replies with "Assistant:", "User:", or any meta labels.
         - when user asks about itinerary or itinerary list,give them the list in proper format.
-          eg question: "I need a two day itinery, im landing in kochi for the weekend".
+          eg question: "I need a two day itinery, im landing in kochi for the weekend".
                      "I need a three day itinerary list , as i am visiting kozhikode for the weekend".
           Dont mind the spelling mistakes for the itinerary.
         
@@ -103,7 +103,7 @@ const signupController = async (req, res) => {
           - ❌ If the user is talking about any other place, **DO NOT call this tool at all**.
         
         ✅ Ending:
-        - After your 5-6 questions, or once the topic is complete, **politely end the chat with a goodbye and thank the user for the conversation 🙏**.
+        -REMEMBER: After your 5-6 questions, or once the topic is complete, **politely end the chat with a goodbye and thank the user for the conversation 🙏**.
         
         ✅ Tone:
         - Friendly 😊, helpful 💡, and efficient 🕒.  
@@ -120,7 +120,7 @@ const signupController = async (req, res) => {
             console.log("openaiResponse", aiResponse);
             functionCall = aiResponse?.tool_calls?.[0]?.function;
           } else {
-            aiResponse = await callGeminiWithFunctions(prompt, GEMINI_API_KEY, GEMINI_URL);
+            aiResponse = await callGeminiWithFunctions(prompt, GEMINI_URL);
             console.log("geminiResponse", aiResponse);
             const candidate = aiResponse?.candidates?.[0];
             console.log("candidate", candidate);
@@ -142,7 +142,7 @@ const signupController = async (req, res) => {
             const args = useOpenAI ? JSON.parse(functionCall.arguments) : functionCall.args;
 
             if (functionCall.name === "sent_message" && args?.message) {
-              replyText = args.message;
+              replyText = await filterGeminiMessage(args.message, GEMINI_URL);
               await wa.messages.text({ body: replyText, preview_url: false }, recipientPhone);
               chatHistories[recipientPhone].push({ role: "assistant", text: replyText });
             } else if (functionCall.name === "sent_next_msg_as_interactive_message") {
@@ -158,11 +158,11 @@ const signupController = async (req, res) => {
               }
             }
           } else if (useOpenAI && aiResponse?.content) {
-            replyText = aiResponse.content;
+            replyText = await filterGeminiMessage(aiResponse.content, GEMINI_URL);
             await wa.messages.text({ body: replyText, preview_url: false }, recipientPhone);
             chatHistories[recipientPhone].push({ role: "assistant", text: replyText });
           } else if (!useOpenAI && aiResponse?.candidates?.[0]?.content?.parts?.[0]?.text) {
-            replyText = aiResponse.candidates[0].content.parts[0].text;
+            replyText = await filterGeminiMessage(aiResponse.candidates[0].content.parts[0].text, GEMINI_URL);
             await wa.messages.text({ body: replyText, preview_url: false }, recipientPhone);
             chatHistories[recipientPhone].push({ role: "assistant", text: replyText });
           }else {
@@ -212,7 +212,7 @@ const signupController = async (req, res) => {
           console.log("[DEBUG] Sending brochure for place:", lastPlace);
           // Send the travel brochure PDF for the last place
           const place = lastPlace || "this place";
-          const caption = `🌟 Here’s your travel brochure for ${place}! 🗺️✨ Let me know if you’d like more tips or info! 😊`
+          const caption = `🌟 Here's your travel brochure for ${place}! 🗺️✨ Let me know if you'd like more tips or info! 😊`
           const brochureUrl = placePdfMap[place.toLowerCase()];
           const filename = `${place.replace(/\s+/g, '_')}.pdf`; // Generate filename from place
           await sendBrochureOrLink(wa, recipientPhone, caption, brochureUrl, filename);

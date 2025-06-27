@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { whatsapp1, wa, useOpenAI, GEMINI_API_KEY, GEMINI_URL } from "./config.js";
+
 
 /**
  * Calls Gemini API with function calling for a user message.
@@ -209,4 +211,44 @@ try {
 } catch (error) {
   console.error('Error while marking as read:', error?.response?.data);
 }
+}
+
+/**
+ * Filters out phrases related to offering brochures or links from a message using Gemini Flash.
+ * @param {string} message - The message to filter.
+ * @param {string} GEMINI_API_KEY - The API key for Gemini.
+ * @param {string} GEMINI_URL - The URL for Gemini API.
+ * @returns {Promise<string>} - The filtered message.
+ */
+export async function filterGeminiMessage(message,GEMINI_URL) {
+  const prompt = `You are given the following message: "${message}". 
+
+  Your task: Remove any sentences or phrases that offer a brochure, a link, or a video related to tourism at the place mentioned. This includes variations like:
+  
+  - "Would you like a brochure or link?"
+  - "Would you like to receive a brochure or link about tourism at this place?"
+  - "Would you like to receive a video about tourism at this place?"
+  - Or any other similar offers.
+  
+  Output only the cleaned message text, with no extra explanations or commentary. If no such phrases are present, return the original message as-is.`;
+  
+  const data = {
+    contents: {
+      role: 'user',
+      parts: [{ text: prompt }]
+    }
+  };
+
+  try {
+    const response = await axios.post(GEMINI_URL, data, {
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    return response.data.candidates[0].content.parts[0].text;
+  } catch (error) {
+    console.error('Gemini filtering API error:', error.response?.data || error.message);
+    // If an error occurs, return the original message to avoid breaking the flow
+    return message;
+  }
 }
