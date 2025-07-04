@@ -221,16 +221,21 @@ try {
  * @returns {Promise<string>} - The filtered message.
  */
 export async function filterGeminiMessage(message,GEMINI_URL) {
-  const prompt = `You are given the following message: "${message}". 
+  const prompt = `You are given the following message: "${message}".
 
-  Your task: Remove any sentences or phrases that offer a brochure, a link, or a video related to tourism at the place mentioned. This includes variations like:
+  Your tasks:
+  1. Remove any sentences or phrases that offer a brochure, a link, or a video related to tourism at the place mentioned. This includes variations like:
+     - "Would you like a brochure or link?"
+     - "Would you like to receive a brochure or link about tourism at this place?"
+     - "Would you like to receive a video about tourism at this place?"
+     - Or any other similar offers.
   
-  - "Would you like a brochure or link?"
-  - "Would you like to receive a brochure or link about tourism at this place?"
-  - "Would you like to receive a video about tourism at this place?"
-  - Or any other similar offers.
+  2. Improve the formatting of the remaining message:
+     - Add appropriate spaces and line breaks between paragraphs or distinct thoughts.
+     - Ensure the message is clean and easy to read.
+     - Correct minor spacing issues if present (e.g., double spaces, missing spaces after periods).
   
-  Output only the cleaned message text, with no extra explanations or commentary. If no such phrases are present, return the original message as-is.`;
+  Output only the cleaned and formatted message text. Do not add any extra explanations or commentary. If no brochure/link/video offers are present, return the original message with improved formatting.`;
   
   const data = {
     contents: {
