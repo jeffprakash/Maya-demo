@@ -1,6 +1,7 @@
 import { whatsapp1, wa, useOpenAI, GEMINI_API_KEY, GEMINI_URL } from "./config.js";
 import { callGeminiWithFunctions, remove_msg, sendBrochureOrLink, sendInteractiveMessage, mark_as_seen, sendVideoMessageDirectly, filterGeminiMessage } from "./utils.js";
 import { callOpenAIWithFunctions } from "./openai_utils.js";
+import { manage_audio } from "./audio.js"; // Importing manage_audio
 
 // In-memory chat history per user (phone number)
 const chatHistories = {};
@@ -53,11 +54,116 @@ const signupController = async (req, res) => {
 
       await remove_msg(incomingMessage,res);
       await mark_as_seen(message_id);
-      // console.log("Message", incomingMessage.text.body);
 
-      // Only handle text messages
+      let userText = "";
       if (typeOfMsg === "text_message" && incomingMessage.text?.body) {
-        const userText = incomingMessage.text.body;
+        userText = incomingMessage.text.body;
+      } else if (incomingMessage.audio?.id) {
+        const audioTranscript = await manage_audio(incomingMessage);
+        if (audioTranscript === "audio_too_large") {
+          const message = {
+            body: "The audio file is too large to process. Please send a shorter audio message.",
+            preview_url: false,
+          };
+          await wa.messages.text(message, recipientPhone);
+          chatHistories[recipientPhone].push({ role: "assistant", text: "The audio file is too large to process. Please send a shorter audio message." });
+          return "end";
+        } else if (audioTranscript) {
+          userText = audioTranscript;
+        } else {
+            const message = {
+                body: "Sorry, I couldn't process the audio. Please try again or send a text message.",
+                preview_url: false,
+            };
+            await wa.messages.text(message, recipientPhone);
+            chatHistories[recipientPhone].push({ role: "assistant", text: "Sorry, I couldn't process the audio. Please try again or send a text message." });
+            return "end";
+        }
+      } else {
+        console.log("Unhandled message type:", typeOfMsg);
+        // Continue to check for interactive messages if no userText from text/audio
+      }
+
+      // Handle interactive button replies and free-text 'yes' replies first, if present
+      if ((typeOfMsg === "simple_button_message" && incomingMessage.button_reply?.id)) {
+        console.log("[DEBUG] Entered button/text reply handler");
+        let buttonId = null;
+        if (typeOfMsg === "simple_button_message") {
+          buttonId = incomingMessage.button_reply.id;
+          console.log("[DEBUG] simple_button_message buttonId:", buttonId);
+        } else if (typeOfMsg === "text_message" && userText.toLowerCase().includes("yes")) {
+          // If it's a text message and contains "yes", treat it as a yes_brochure action
+          buttonId = "yes_brochure_action";
+          console.log("[DEBUG] text_message treated as yes_brochure_action");
+        }
+
+        if (buttonId) { // Only proceed if a buttonId or 'yes' text is identified
+          if (!chatHistories[recipientPhone]) chatHistories[recipientPhone] = [];
+          // Add the button reply or text reply to chat history
+          const userReplyText = typeOfMsg === "simple_button_message" ? incomingMessage.button_reply.title : userText;
+          chatHistories[recipientPhone].push({ role: "user", text: userReplyText });
+
+          // Try to extract the last place offered from the assistant's last interactive message
+          let lastPlace = chatHistories[recipientPhone]?.lastPlaceSuggested || null;
+          if (!lastPlace) {
+            for (let i = chatHistories[recipientPhone].length - 1; i >= 0; i--) {
+              const entry = chatHistories[recipientPhone][i];
+              if (entry.role === "assistant" && entry.text && entry.text.toLowerCase().includes("brochure") && entry.text.toLowerCase().match(/fort kochi|munnar|idukki|alapuzha|alappuzha|kozhikode/)) {
+                lastPlace = (entry.text.match(/fort kochi|munnar|idukki|alapuzha|alappuzha|kozhikode/i) || [])[0];
+                console.log("[DEBUG] Found lastPlace in chat history (from scan):", lastPlace);
+                break;
+              }
+            }
+          }
+          
+          if (buttonId === "yes_brochure_action" && lastPlace) {
+            console.log("[DEBUG] Sending brochure for place:", lastPlace);
+            // Send the travel brochure PDF for the last place
+            const place = lastPlace || "this place";
+            const caption = `🌟 Here's your travel brochure for ${place}! 🗺️✨ `
+            const brochureUrl = placePdfMap[place.toLowerCase()];
+            const filename = `${place.replace(/\s+/g, '_')}.pdf`; // Generate filename from place
+            await sendBrochureOrLink(wa, recipientPhone, caption, brochureUrl, filename);
+            chatHistories[recipientPhone].push({ role: "assistant", text: caption });
+            chatHistories[recipientPhone].lastPlaceSuggested = place; // Update lastPlaceSuggested for video
+          } else if (buttonId === "no_brochure_action") {
+            console.log("[DEBUG] User declined brochure");
+            const replyText = "👍 Okay! Let me know if you need anything else for your trip! ✈️😊";
+            await wa.messages.text({ body: replyText, preview_url: false }, recipientPhone);
+            chatHistories[recipientPhone].push({ role: "assistant", text: replyText });
+          } else if (buttonId === "yes_video_action" && lastPlace) {
+            console.log("[DEBUG] Sending video for place:", lastPlace);
+            const place = lastPlace || "this place";
+            const caption = `📸 Here's your travel video for ${place}! 🎥🌿 Hope you enjoy the vibes! 😄`;
+            const videoUrl = placevideoMap[place.toLowerCase()];
+            
+            if (place.toLowerCase() === "kozhikode") {
+              const message = {
+                body: videoUrl,
+                preview_url: true,
+              };
+              await wa.messages.text(message, recipientPhone);
+              chatHistories[recipientPhone].push({ role: "assistant", text: `Sent video link for ${place}: ${videoUrl}` });
+            } else {
+              const accessToken = process.env.ACCESSTOKEN;
+              const senderPhoneNumberId = process.env.WA_PHONE_NUMBER_ID;
+              await sendVideoMessageDirectly(recipientPhone, caption, videoUrl, accessToken, senderPhoneNumberId);
+              chatHistories[recipientPhone].push({ role: "assistant", text: caption });
+            }
+          } else if (buttonId === "no_video_action") {
+            console.log("[DEBUG] User declined video");
+            const replyText = "✅ No problem at all! Just let me know if you need anything else for your trip! 🌍✨";
+            await wa.messages.text({ body: replyText, preview_url: false }, recipientPhone);
+            chatHistories[recipientPhone].push({ role: "assistant", text: replyText });
+          } else {
+            console.log("[DEBUG] Button/text reply did not match any expected branch", buttonId);
+          }
+          return "end"; // End processing if an interactive message was handled
+        }
+      } // End of interactive message handling
+
+      // Only proceed with AI processing if userText is available and not an interactive message handled above
+      if (userText) {
         // Maintain chat history
         if (!chatHistories[recipientPhone]) chatHistories[recipientPhone] = [];
         chatHistories[recipientPhone].push({ role: "user", text: userText });
@@ -75,7 +181,7 @@ const signupController = async (req, res) => {
         ✅ General:
         - ONLY answer **travel-related questions**.  
           👉 If user asks anything off-topic, politely say:  
-          "Sorry, I can only help with travel-related topics 🌍."
+          "Sorry, I only help with travel-related topics 🌍."
         
         ✅ Introduction:
         - Introduce yourself **once at the start** as "Maya, your Kerala travel assistant" and **never repeat your name again** during the conversation.
@@ -111,8 +217,7 @@ const signupController = async (req, res) => {
         
         Now start the conversation...`;
         
-        
-       try {
+        try {
           let aiResponse;
           let functionCall;
           if (useOpenAI) {
@@ -165,10 +270,14 @@ const signupController = async (req, res) => {
             replyText = await filterGeminiMessage(aiResponse.candidates[0].content.parts[0].text, GEMINI_URL);
             await wa.messages.text({ body: replyText, preview_url: false }, recipientPhone);
             chatHistories[recipientPhone].push({ role: "assistant", text: replyText });
-          }else {
-            console.log("[DEBUG] Gemini response has no function call or text content in expected format:", JSON.stringify(aiResponse));
-            await wa.messages.text({ body: "Sorry, I couldn't process your request.", preview_url: false }, recipientPhone);
-            chatHistories[recipientPhone].push({ role: "assistant", text: "Sorry, I couldn't process your request." });
+          } else {
+            console.log("No text content or function call found in AI response:", aiResponse);
+            const message = {
+              body: "Sorry, I couldn't understand that. Can you please rephrase?",
+              preview_url: false,
+            };
+            await wa.messages.text(message, recipientPhone);
+            chatHistories[recipientPhone].push({ role: "assistant", text: "Sorry, I couldn't understand that. Can you please rephrase?" });
           }
         } catch (err) {
           const errorMessage = `AI error: ${err.message || "Unknown error"}`;
@@ -176,84 +285,7 @@ const signupController = async (req, res) => {
           chatHistories[recipientPhone].push({ role: "assistant", text: errorMessage });
         }
       }
-
-      // Handle interactive button replies and free-text 'yes' replies
-      if ((typeOfMsg === "simple_button_message" && incomingMessage.button_reply?.id) ) {
-        console.log("[DEBUG] Entered button/text reply handler");
-        let buttonId = null;
-        if (typeOfMsg === "simple_button_message") {
-          buttonId = incomingMessage.button_reply.id;
-          console.log("[DEBUG] simple_button_message buttonId:", buttonId);
-        } else if (typeOfMsg === "text_message") {
-          buttonId = "yes_brochure";
-          console.log("[DEBUG] text_message treated as yes_brochure");
-        }
-        if (!chatHistories[recipientPhone]) chatHistories[recipientPhone] = [];
-        // Add the button reply or text reply to chat history
-        const userReplyText = typeOfMsg === "simple_button_message" ? incomingMessage.button_reply.title : incomingMessage.text.body;
-        chatHistories[recipientPhone].push({ role: "user", text: userReplyText });
-        // Try to extract the last place offered from the assistant's last interactive message
-        let lastPlace = null;
-        if (chatHistories[recipientPhone].lastPlaceSuggested) {
-          lastPlace = chatHistories[recipientPhone].lastPlaceSuggested;
-          console.log("[DEBUG] Found lastPlace in chat history (from stored):", lastPlace);
-        } else {
-          for (let i = chatHistories[recipientPhone].length - 1; i >= 0; i--) {
-            const entry = chatHistories[recipientPhone][i];
-            if (entry.role === "assistant" && entry.text && entry.text.toLowerCase().includes("brochure") && entry.text.toLowerCase().match(/fort kochi|munnar|idukki|alapuzha|alappuzha|kozhikode/)) {
-              lastPlace = (entry.text.match(/fort kochi|munnar|idukki|alapuzha|alappuzha|kozhikode/i) || [])[0];
-              console.log("[DEBUG] Found lastPlace in chat history (from scan):", lastPlace);
-              break;
-            }
-          }
-        }
-        
-        if (buttonId === "yes_brochure_action" || (buttonId === "yes_brochure" && lastPlace)) {
-          console.log("[DEBUG] Sending brochure for place:", lastPlace);
-          // Send the travel brochure PDF for the last place
-          const place = lastPlace || "this place";
-          const caption = `🌟 Here's your travel brochure for ${place}! 🗺️✨ Let me know if you'd like more tips or info! 😊`
-          const brochureUrl = placePdfMap[place.toLowerCase()];
-          const filename = `${place.replace(/\s+/g, '_')}.pdf`; // Generate filename from place
-          await sendBrochureOrLink(wa, recipientPhone, caption, brochureUrl, filename);
-          chatHistories[recipientPhone].push({ role: "assistant", text: caption });
-          chatHistories[recipientPhone].lastPlaceSuggested = place; // Update lastPlaceSuggested for video
-        } else if (buttonId === "no_brochure_action" || (buttonId && buttonId.toLowerCase().includes("no"))) {
-          console.log("[DEBUG] User declined brochure");
-          const replyText = "👍 Okay! Let me know if you need anything else for your trip! ✈️😊";
-          await wa.messages.text({ body: replyText, preview_url: false }, recipientPhone);
-          chatHistories[recipientPhone].push({ role: "assistant", text: replyText });
-        } else if (buttonId === "yes_video_action" && lastPlace) {
-          console.log("[DEBUG] Sending video for place:", lastPlace);
-          const place = lastPlace || "this place";
-          const caption = `📸 Here's your travel video for ${place}! 🎥🌿 Hope you enjoy the vibes! 😄`;
-          const videoUrl = placevideoMap[place.toLowerCase()];
-          
-          if (place.toLowerCase() === "kozhikode") {
-            const message = {
-              body: videoUrl,
-              preview_url: true,
-            };
-            await wa.messages.text(message, recipientPhone);
-            chatHistories[recipientPhone].push({ role: "assistant", text: `Sent video link for ${place}: ${videoUrl}` });
-          } else {
-            const accessToken = process.env.ACCESSTOKEN;
-            const senderPhoneNumberId = process.env.WA_PHONE_NUMBER_ID;
-            await sendVideoMessageDirectly(recipientPhone, caption, videoUrl, accessToken, senderPhoneNumberId);
-            chatHistories[recipientPhone].push({ role: "assistant", text: caption });
-          }
-        } else if (buttonId === "no_video_action" || (buttonId && buttonId.toLowerCase().includes("no_video"))) {
-          console.log("[DEBUG] User declined video");
-          const replyText = "✅ No problem at all! Just let me know if you need anything else for your trip! 🌍✨";
-          await wa.messages.text({ body: replyText, preview_url: false }, recipientPhone);
-          chatHistories[recipientPhone].push({ role: "assistant", text: replyText });
-        } else {
-          console.log("[DEBUG] Button/text reply did not match any expected branch", buttonId);
-        }
-        return "end";
-      }
-
-    }
+    } // End of if (body?.isMessage)
 
     return "end";
   } catch (error) {

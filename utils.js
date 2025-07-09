@@ -74,15 +74,19 @@ export async function callGeminiWithFunctions(userText, GEMINI_API_KEY, GEMINI_U
  * @param {string} buttonText - Button text.
  */
 export async function sendBrochureOrLink(wa, recipientPhone, caption, url,filename) {
-  const finalUrl = url || "https://tzetpurznmnqatbiarot.supabase.co/storage/v1/object/public/random//travel.pdf";
+  const finalUrl = url;
 
+  console.log("finalUrl", finalUrl);
   const self_hosted_document =
 {
     "link" : new URL( finalUrl ).href,
     "caption" : caption,
     "filename" : filename
 };
-await wa.messages.document( self_hosted_document, recipientPhone );
+
+console.log("self_hosted_document", self_hosted_document);
+  const response = await wa.messages.document( self_hosted_document, recipientPhone );
+  console.log("response", response);
   await sendVideoInteractiveMessage(wa, recipientPhone, `Would you like to receive a video about tourism at ${filename.replace(/_/g, ' ').replace('.pdf', '')}?`, filename.replace(/_/g, ' ').replace('.pdf', ''));
 }
 
