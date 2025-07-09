@@ -31,12 +31,12 @@ export const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/mode
 
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCJLMfsBsxcTHhALB5iTRMEm6qS53cKpdM",
+  apiKey: process.env.FIREBASE_API_KEY,
   authDomain: "zyadha-9c9e0.firebaseapp.com",
-  projectId: "zyadha-9c9e0",
+  projectId: process.env.FIREBASE_PROJECT_ID,
   storageBucket: "zyadha-9c9e0.appspot.com",
   messagingSenderId: "329857252578",
-  appId: "1:329857252578:web:71b4ed75a95a34ff3b32bb"
+  appId: process.env.FIREBASE_APP_ID
 };
 
 // Initialize Firebase
