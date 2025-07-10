@@ -91,11 +91,11 @@ const signupController = async (req, res) => {
         if (typeOfMsg === "simple_button_message") {
           buttonId = incomingMessage.button_reply.id;
           console.log("[DEBUG] simple_button_message buttonId:", buttonId);
-        } else if (typeOfMsg === "text_message" && userText.toLowerCase().includes("yes")) {
+        } /*else if (typeOfMsg === "text_message") {
           // If it's a text message and contains "yes", treat it as a yes_brochure action
           buttonId = "yes_brochure_action";
           console.log("[DEBUG] text_message treated as yes_brochure_action");
-        }
+        }*/
 
         if (buttonId) { // Only proceed if a buttonId or 'yes' text is identified
           if (!chatHistories[recipientPhone]) chatHistories[recipientPhone] = [];
